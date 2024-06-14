@@ -58,9 +58,9 @@ def inference_probs_and_errs(model, input_ids):
                 logits = torch.concat([logits, cur_logits])
 
     probs = F.softmax(logits.float(), dim=-1)
-    top_prob, pred_next_token_ids = torch.topk(probs, dim=-1, k=1)
+    _, pred_next_token_ids = torch.topk(probs, dim=-1, k=1)
 
-    return top_prob, pred_next_token_ids
+    return probs, pred_next_token_ids
 
 
 def projection_edit(model, LayerHeadPairs, P, component):
