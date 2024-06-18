@@ -223,6 +223,7 @@ def main(
         rep=rep,
         layer_head_pairs=PTH[:K],
         component="OV",
+        n_exp=n_exp,
         ignore_burning=ignore_burning,
         ignore_segment=ignore_segment,
         save_to=f"Figs/shuffle/{model_name}_OV_{K}_T0_{seg_len}.png",

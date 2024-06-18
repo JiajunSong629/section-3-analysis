@@ -26,26 +26,19 @@ def get_attentions(model, input_ids):
 def measure_IH_PTH(attentions, seg_len, is_IH):
     sample_size, num_layer, num_head, T, _ = attentions.shape
     scores = np.zeros((num_layer, num_head))
-    # for layer in range(num_layer):
-    #     for head in range(num_head):
-    #         A = attentions[layer, head]
-    #         A_adjusted = np.zeros((T, T))
-    #         A_adjusted[1:, 1:] = A[1:, 1:] / np.sum(A[1:, 1:], axis=1, keepdims=True)
-    #         diag1 = np.diag(A_adjusted, -(seg_len - 1))[1:]
-    #         diag2 = np.diag(A_adjusted, -(2 * seg_len - 1))[1:]
-    #         diag = np.concatenate((diag1[:-seg_len], diag1[-seg_len:] + diag2))
-    #         scores[layer, head] = np.mean(diag)
-
-    # idx_sort = np.argsort(scores, axis=None)[::-1]
-    # IH_list = [
-    #     [idx_sort[j] // num_head, idx_sort[j] % num_head] for j in range(len(idx_sort))
-    # ]
-    # for layer, head in IH_list[:20]:
-    #     print(f"Layer {layer} Head {head}: score {scores[layer, head]}")
     offset = -(seg_len - 1) if is_IH else -1
 
     for layer in range(num_layer):
         for head in range(num_head):
+
+            #         A = attentions[layer, head]
+            #         A_adjusted = np.zeros((T, T))
+            #         A_adjusted[1:, 1:] = A[1:, 1:] / np.sum(A[1:, 1:], axis=1, keepdims=True)
+            #         diag1 = np.diag(A_adjusted, -(seg_len - 1))[1:]
+            #         diag2 = np.diag(A_adjusted, -(2 * seg_len - 1))[1:]
+            #         diag = np.concatenate((diag1[:-seg_len], diag1[-seg_len:] + diag2))
+            #         scores[layer, head] = np.mean(diag)
+
             A = attentions[:, layer, head]
             A_adjusted = np.zeros((sample_size, T, T))
             A_adjusted[:, 1:, 1:] = A[:, 1:, 1:] / np.sum(
@@ -69,27 +62,6 @@ def measure_IH_PTH(attentions, seg_len, is_IH):
         print(f"Layer {layer} Head {head}: score {scores[layer, head]}")
 
     return head_list
-
-
-def get_PTH(attentions, seg_len=None):
-    num_layer, num_head, T, _ = attentions.shape
-    scores = np.zeros((num_layer, num_head))
-    for layer in range(num_layer):
-        for head in range(num_head):
-            A = attentions[layer, head]
-            A_adjusted = np.zeros((T, T))
-            A_adjusted[1:, 1:] = A[1:, 1:] / np.sum(A[1:, 1:], axis=1, keepdims=True)
-            diag = np.diag(A_adjusted, -1)[1:]
-            scores[layer, head] = np.mean(diag)
-
-    idx_sort = np.argsort(scores, axis=None)[::-1]
-    Shifting_list = [
-        [idx_sort[j] // num_head, idx_sort[j] % num_head] for j in range(len(idx_sort))
-    ]
-    for layer, head in Shifting_list[:20]:
-        print(f"Layer {layer} Head {head}: score {scores[layer, head]}")
-
-    return Shifting_list
 
 
 def get_W_all(model, model_name):

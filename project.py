@@ -44,7 +44,6 @@ def projection_edit(
 def plot(
     probs,
     errs,
-    rank_min,
     rank_max,
     rank_step,
     save_to,
@@ -55,14 +54,14 @@ def plot(
     ave_errs = [np.mean(vals) for vals in errs.values()]
 
     axs[0].plot(
-        range(rank_min, rank_max + 1, rank_step),
-        ave_probs,
+        range(0, rank_max + 1, rank_step)[1:],
+        ave_probs[1:],
         "-o",
         label="projected",
     )
     axs[1].plot(
-        range(rank_min, rank_max + 1, rank_step),
-        ave_errs,
+        range(0, rank_max + 1, rank_step)[1:],
+        ave_errs[1:],
         "-o",
         label="projected",
     )
@@ -105,6 +104,9 @@ def calc_V(W_all, IH, use_R=False, max_rel_dist=0):
 
 
 def Vt_to_projection(Vt, rank, project_out):
+    if rank == 0:
+        return np.eye(Vt.shape[1])
+
     V = Vt[:rank, :].T
     P = V @ V.T
     P = np.eye(P.shape[0]) - P if project_out else P
@@ -122,7 +124,6 @@ def proj_exp(
     K1,
     component,
     proj_out,
-    rank_min,
     rank_max,
     rank_step,
     save_to,
@@ -153,7 +154,7 @@ def proj_exp(
 
     layer_head_pairs = IH[:K1] if component == "QK" else PTH[:K1]
 
-    for rank in range(rank_min, rank_max + 1, rank_step):
+    for rank in range(0, rank_max + 1, rank_step):
         print("RANK", rank)
         P = Vt_to_projection(Vt, rank, proj_out)
 
@@ -177,13 +178,15 @@ def proj_exp(
         print("ERR", errs[rank].mean())
         print("PROB", probs[rank].mean())
 
-    plot(probs, errs, rank_min, rank_max, rank_step, save_to)
+    plot(probs, errs, rank_max, rank_step, save_to)
 
     return probs, errs
 
 
 def main(
     model_name,
+    component,
+    proj_out,
     batch_size=50,
     seg_len=25,
     rep=3,
@@ -191,30 +194,26 @@ def main(
     ignore_burning=4,
     K0=10,
     K1=30,
-    rank_min=0,
     rank_max=100,
     rank_step=5,
 ):
     create_folder("Figs/proj")
 
-    for component in ["QK", "OV"]:
-        for proj_out in [True, False]:
-            proj_exp(
-                model_name=model_name,
-                batch_size=batch_size,
-                rep=rep,
-                seg_len=seg_len,
-                ignore_segment=ignore_segment,
-                ignore_burning=ignore_burning,
-                K0=K0,
-                K1=K1,
-                proj_out=proj_out,
-                component=component,
-                rank_min=rank_min,
-                rank_max=rank_max,
-                rank_step=rank_step,
-                save_to=f"Figs/proj/{model_name}_{component}_proj{proj_out}_K0_{K0}_K1_{K1}.png",
-            )
+    proj_exp(
+        model_name=model_name,
+        batch_size=batch_size,
+        rep=rep,
+        seg_len=seg_len,
+        ignore_segment=ignore_segment,
+        ignore_burning=ignore_burning,
+        K0=K0,
+        K1=K1,
+        proj_out=proj_out,
+        component=component,
+        rank_max=rank_max,
+        rank_step=rank_step,
+        save_to=f"Figs/proj/{model_name}_{component}_proj{proj_out}_K0_{K0}_K1_{K1}.png",
+    )
 
 
 if __name__ == "__main__":
