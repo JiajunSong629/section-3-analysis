@@ -2,7 +2,16 @@ import torch
 import torch.nn.functional as F
 import os
 import numpy as np
-from transformers import GPT2LMHeadModel, GemmaForCausalLM, LlamaForCausalLM
+from transformers import (
+    GPT2LMHeadModel,
+    GemmaForCausalLM,
+    LlamaForCausalLM,
+    FalconForCausalLM,
+    MistralForCausalLM,
+    OlmoForCausalLM,
+    AutoModelForCausalLM,
+    AutoConfig,
+)
 
 
 def create_folder(dir):
@@ -94,7 +103,9 @@ def load_model(model_name):
 
     def load_gpt2xl():
         model = GPT2LMHeadModel.from_pretrained(
-            "gpt2-xl", output_attentions=True, device_map="cuda"
+            "gpt2-xl",
+            output_attentions=True,
+            device_map="cuda",
         )
         return model
 
@@ -116,27 +127,85 @@ def load_model(model_name):
         )
         return gemma
 
+    def load_falcon_7b():
+        falcon = FalconForCausalLM.from_pretrained(
+            "tiiuae/falcon-7b",
+            output_attentions=True,
+            torch_dtype=torch.bfloat16,
+            device_map="cuda",
+        )
+        return falcon
+
+    def load_mistral_7b():
+        mistral = MistralForCausalLM.from_pretrained(
+            "mistralai/Mistral-7B-v0.1",
+            output_attentions=True,
+            torch_dtype=torch.bfloat16,
+            device_map="cuda",
+        )
+        return mistral
+
+    def load_olmo_7b():
+        olmo = OlmoForCausalLM.from_pretrained(
+            "allenai/OLMo-1.7-7B-hf",
+            output_attentions=True,
+            torch_dtype=torch.bfloat16,
+            device_map="cuda",
+        )
+        return olmo
+
+    def load_pythia_7b():
+        pythia = AutoModelForCausalLM.from_pretrained(
+            "EleutherAI/pythia-6.9b",
+            output_attentions=True,
+            torch_dtype=torch.bfloat16,
+            device_map="cuda",
+        )
+        return pythia
+
     return {
         "gpt2": load_gpt2,
         "gpt2-xl": load_gpt2xl,
         "llama2-7b": load_llama2_7b,
         "gemma-7b": load_gemma_7b,
+        "falcon-7b": load_falcon_7b,
+        "mistral-7b": load_mistral_7b,
+        "olmo-7b": load_olmo_7b,
+        "pythia-7b": load_pythia_7b,
     }[model_name]()
 
 
-def get_configs(model_name):
-    num_layer, num_head, d_model, d_head, vocab_size = {
-        "gpt2": (12, 12, 768, 64, 50257),
-        "gpt2-xl": (48, 25, 1600, 64, 50257),
-        "llama2-7b": (32, 32, 4096, 128, 32000),
-        "gemma-7b": (28, 16, 3072, 256, 256000),
+def get_config(model_name):
+    # num_layer, num_head, d_model, d_head, vocab_size = {
+    #     "gpt2": (12, 12, 768, 64, 50257),
+    #     "gpt2-xl": (48, 25, 1600, 64, 50257),
+    #     "llama2-7b": (32, 32, 4096, 128, 32000),
+    #     "gemma-7b": (28, 16, 3072, 256, 256000),
+    #     "falcon-7b": (32, 71, 4544, 64, 65024),
+    #     "mistral-7b": (32, 32, 4096, 128, 32000),
+    #     "olmo-7b": (32, 32, 4096, 128, 50304),
+    #     "pythia-7b": (32, 32, 4096, 128, 50432),
+    # }[model_name]
+
+    model_name_hf = {
+        "gpt2": "gpt2",
+        "gpt2-xl": "gpt2-xl",
+        "llama2-7b": "meta-llama/Llama-2-7b-hf",
+        "gemma-7b": "google/gemma-7b",
+        "falcon-7b": "tiiuae/falcon-7b",
+        "mistral-7b": "mistralai/Mistral-7B-v0.1",
+        "olmo-7b": "allenai/OLMo-1.7-7B-hf",
+        "pythia-7b": "EleutherAI/pythia-6.9b",
     }[model_name]
+    config = AutoConfig.from_pretrained(model_name_hf)
 
-    return num_layer, num_head, d_model, d_head, vocab_size
+    return config
 
 
-def get_qkov_weight(model, model_name, ilayer, ihead, component):
-    num_layer, num_head, d_model, d_head, _ = get_configs(model_name)
+def get_qkov_weight(model, model_name, config, ilayer, ihead, component):
+    num_head = config.num_attention_heads
+    d_model = config.hidden_size
+    d_head = d_model // num_head
 
     if model_name in ["gpt2", "gpt2-xl"]:
         attn = model.transformer.h[ilayer].attn.c_attn
@@ -147,23 +216,45 @@ def get_qkov_weight(model, model_name, ilayer, ihead, component):
                 :, d_model + ihead * d_head : d_model + ihead * d_head + d_head
             ],
             "v": attn.weight[
-                d_model * 2 + ihead * d_head : d_model * 2 + ihead * d_head + d_head
+                :, d_model * 2 + ihead * d_head : d_model * 2 + ihead * d_head + d_head
             ],
-            "o": proj.weight[ihead * d_head : ihead * d_head + d_head, :],
+            "o": proj.weight[ihead * d_head : ihead * d_head + d_head, :].T,
         }[component].data
 
-    elif model_name in ["llama2-7b", "gemma-7b"]:
+    elif model_name in ["llama2-7b", "gemma-7b", "mistral-7b", "olmo-7b"]:
+        if model_name == "mistral-7b":
+            ikvhead = ihead * config.num_key_value_heads // num_head
+        else:
+            ikvhead = ihead
+
         attn = model.model.layers[ilayer].self_attn
-        ind = range(ihead * d_head, ihead * d_head + d_head)
         return {
             "q": attn.q_proj.weight.T[:, ihead * d_head : ihead * d_head + d_head],
-            "k": attn.k_proj.weight.T[:, ihead * d_head : ihead * d_head + d_head],
-            "v": attn.v_proj.weight.T[:, ihead * d_head : ihead * d_head + d_head],
-            "o": attn.o_proj.weight.T[ihead * d_head : ihead * d_head + d_head, :],
+            "k": attn.k_proj.weight.T[:, ikvhead * d_head : ikvhead * d_head + d_head],
+            "v": attn.v_proj.weight.T[:, ikvhead * d_head : ikvhead * d_head + d_head],
+            "o": attn.o_proj.weight.T[ihead * d_head : ihead * d_head + d_head, :].T,
+        }[component].data
+    elif model_name in ["falcon-7b"]:
+        attn = model.transformer.h[ilayer].self_attention
+        splited = attn.query_key_value.weight.view(2 + num_head, d_head, d_model)
+        q, k, v = splited[:-2], splited[-2], splited[-1]
+        return {
+            "q": q[ihead].T,
+            "k": k.T,
+            "v": v.T,
+            "o": attn.dense.weight.T[ihead * d_head : ihead * d_head + d_head, :].T,
         }[component].data
 
 
-def make_input_ids(batch_size, seg_len, rep, vocab_size, seed=None, prepend_bos=False):
+def make_input_ids(
+    batch_size,
+    seg_len,
+    rep,
+    vocab_size,
+    seed=None,
+    prepend_bos=False,
+    bos=None,
+):
     if seed:
         np.random.seed(seed)
 
@@ -174,7 +265,7 @@ def make_input_ids(batch_size, seg_len, rep, vocab_size, seed=None, prepend_bos=
     sample_int = np.concatenate(tuple([sample_int] * rep), axis=1)
 
     if prepend_bos:
-        sample_int = np.hstack([2 * np.ones((batch_size, 1), dtype=int), sample_int])
+        sample_int = np.hstack([bos * np.ones((batch_size, 1), dtype=int), sample_int])
 
     input_ids = torch.Tensor(sample_int).long()
 

@@ -1,23 +1,25 @@
 import copy
 import torch
 import numpy as np
-import os
 from collections import defaultdict
 import matplotlib.pyplot as plt
 import gc
+import json
 import fire
 from utils import (
     make_input_ids,
-    create_folder,
     inference_probs_and_errs,
     load_model,
-    get_configs,
+    get_config,
     get_qkov_weight,
 )
 
 
 def collect_random_layer_head_pairs(model_name, K):
-    num_layer, num_head, d_model, d_head, _ = get_configs(model_name)
+    config = get_config(model_name)
+    num_head = config.num_attention_heads
+    num_layer = config.num_hidden_layers
+
     LH = []
     while len(LH) < K:
         layer = np.random.randint(low=1, high=num_layer - 1)
@@ -28,12 +30,15 @@ def collect_random_layer_head_pairs(model_name, K):
 
 
 def collect_components_to_copy(model, model_name, layer_head_pairs):
+    config = get_config(model_name)
     components_copy = {}
     for ilayer, ihead in layer_head_pairs:
         for name in ["Q", "K", "O", "V"]:
             component_name = f"L_{ilayer}_H_{ihead}_{name}_weight"
             components_copy[component_name] = copy.deepcopy(
-                get_qkov_weight(model, model_name, ilayer, ihead, name.lower()).data
+                get_qkov_weight(
+                    model, model_name, config, ilayer, ihead, name.lower()
+                ).data
             )
 
     return components_copy
@@ -45,7 +50,10 @@ def exchange_edit(
     layer_head_pairs,
     component="QK",
     type="original",
+    seed=2024,
 ):
+    np.random.seed(seed)
+
     K = len(layer_head_pairs)
 
     if type == "original":
@@ -62,39 +70,20 @@ def exchange_edit(
         layer_head_pairs=layer_head_pairs_1,
     )
 
-    if component == "QK":
-        for (layer, head), (layer_perm, head_perm) in zip(
-            layer_head_pairs, layer_head_pairs_1
-        ):
-            for name in ["Q", "K"]:
-                component_name = f"L_{layer_perm}_H_{head_perm}_{name}_weight"
-                w = get_qkov_weight(
-                    model,
-                    model_name,
-                    layer,
-                    head,
-                    component=name.lower(),
-                )
-                # print("BEFORE", w.sum())
-                w.copy_(components_copy[component_name])
-                # print("TMP", w.sum())
-                # print(
-                #     "AFTER",
-                #     get_qkov_weight(
-                #         model, model_name, layer, head, component=name.lower()
-                #     ).sum(),
-                # )
-
-    elif component == "OV":
-        for (layer, head), (layer_perm, head_perm) in zip(
-            layer_head_pairs, layer_head_pairs_1
-        ):
-            for name in ["O", "V"]:
-                component_name = f"L_{layer_perm}_H_{head_perm}_{name}_weight"
-                w = get_qkov_weight(
-                    model, model_name, layer, head, component=name.lower()
-                )
-                w.copy_(components_copy[component_name])
+    for (layer, head), (layer_perm, head_perm) in zip(
+        layer_head_pairs, layer_head_pairs_1
+    ):
+        for name in list(component):
+            component_name = f"L_{layer_perm}_H_{head_perm}_{name}_weight"
+            w = get_qkov_weight(
+                model=model,
+                model_name=model_name,
+                config=get_config(model_name),
+                ilayer=layer,
+                ihead=head,
+                component=name.lower(),
+            )
+            w.copy_(components_copy[component_name])
 
     return model
 
@@ -136,9 +125,8 @@ def shuffle_exp(
     layer_head_pairs,
     component,
     n_exp,
-    save_to,
+    seed,
 ):
-
     T_range = range(seg_len * ignore_segment + ignore_burning, rep * seg_len - 1)
     probs = defaultdict(list)
     errs = defaultdict(list)
@@ -147,13 +135,13 @@ def shuffle_exp(
         batch_size=batch_size,
         seg_len=seg_len,
         rep=rep,
-        vocab_size=get_configs(model_name)[-1],
+        vocab_size=get_config(model_name).vocab_size,
         seed=2024,
         prepend_bos=model_name == "gemma-7b",
     )
 
     for name in ["original", "random baseline", "shuffle"]:
-        print("NAME", name)
+        # print("NAME", name)
 
         for _ in range(n_exp):
 
@@ -164,6 +152,7 @@ def shuffle_exp(
                 layer_head_pairs=layer_head_pairs,
                 component=component,
                 type=name,
+                seed=seed,
             )
 
             prob, err = inference_probs_and_errs(model_edit, input_ids)
@@ -177,12 +166,22 @@ def shuffle_exp(
         probs[name] = np.vstack(probs[name])
         errs[name] = np.vstack(errs[name])
 
-        print("ERR", errs[name].mean())
-        print("PROB", probs[name].mean())
-
-    plot(probs, errs, save_to)
+        # print("ERR", errs[name].mean())
+        # print("PROB", probs[name].mean())
 
     return probs, errs
+
+
+def jsonify(metrics, save_to):
+    metrics_json = []
+    for name in metrics:
+        metrics_json.append(
+            {"name": name, "metric": np.mean(metrics[name], axis=0).tolist()}
+        )
+    with open(save_to, "w") as f:
+        json.dump(metrics_json, f)
+
+    print(f"Saved to {save_to}")
 
 
 def main(
@@ -194,16 +193,14 @@ def main(
     rep=3,
     ignore_segment=1,
     ignore_burning=4,
+    seed=2024,
 ):
 
     IH = torch.load(f"checkpoints/{model_name}/IH.pt")
     PTH = torch.load(f"checkpoints/{model_name}/PTH.pt")
 
-    create_folder("Figs")
-    create_folder(f"Figs/shuffle")
-
     print("K", K)
-    shuffle_exp(
+    probs, errs = shuffle_exp(
         model_name=model_name,
         batch_size=batch_size,
         seg_len=seg_len,
@@ -213,10 +210,13 @@ def main(
         component="QK",
         ignore_burning=ignore_burning,
         ignore_segment=ignore_segment,
-        save_to=f"Figs/shuffle/{model_name}_QK_{K}_T0_{seg_len}.png",
+        seed=seed,
     )
+    jsonify(probs, save_to=f"out/{model_name}/shuffle_probs_QK_{K}.json")
+    jsonify(errs, save_to=f"out/{model_name}/shuffle_errs_QK_{K}.json")
+    plot(probs, errs, save_to=f"out/{model_name}/Figs/shuffle_QK_{K}.png")
 
-    shuffle_exp(
+    probs, errs = shuffle_exp(
         model_name=model_name,
         batch_size=batch_size,
         seg_len=seg_len,
@@ -226,8 +226,11 @@ def main(
         n_exp=n_exp,
         ignore_burning=ignore_burning,
         ignore_segment=ignore_segment,
-        save_to=f"Figs/shuffle/{model_name}_OV_{K}_T0_{seg_len}.png",
+        seed=seed,
     )
+    jsonify(probs, save_to=f"out/{model_name}/shuffle_probs_OV_{K}.json")
+    jsonify(errs, save_to=f"out/{model_name}/shuffle_errs_OV_{K}.json")
+    plot(probs, errs, save_to=f"out/{model_name}/Figs/shuffle_OV_{K}.png")
 
 
 if __name__ == "__main__":
