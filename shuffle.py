@@ -137,7 +137,8 @@ def shuffle_exp(
         rep=rep,
         vocab_size=get_config(model_name).vocab_size,
         seed=2024,
-        prepend_bos=model_name == "gemma-7b",
+        prepend_bos=model_name in ["gemma-7b", "llama2-7b", "mixtral-7b"],
+        bos={"llama2-7b": 1, "gemma-7b": 2, "mistral-7b": 1}.get(model_name, None),
     )
 
     for name in ["original", "random baseline", "shuffle"]:

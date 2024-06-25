@@ -276,7 +276,7 @@ def inference_probs_and_errs(model, input_ids):
     with torch.no_grad():
         for i in range(input_ids.size(0)):
             cur_batch_input_ids = input_ids[i : i + 1]
-            cur_logits = model(cur_batch_input_ids).logits
+            cur_logits = model(cur_batch_input_ids).logits.cpu()
             if i == 0:
                 logits = cur_logits
             else:
@@ -285,7 +285,7 @@ def inference_probs_and_errs(model, input_ids):
     probs = F.softmax(logits.float(), dim=-1)
     _, pred_next_token_ids = torch.topk(probs, dim=-1, k=1)
 
-    err = (input_ids[:, 1:] != pred_next_token_ids[:, :-1, 0]).numpy(force=True)
+    err = (input_ids[:, 1:].cpu() != pred_next_token_ids[:, :-1, 0]).numpy(force=True)
 
     probs_on_correct = np.zeros_like(input_ids[:, 1:].numpy(force=True))
     batch_size, seq_len, n_vocab = probs.shape

@@ -1,14 +1,14 @@
 import copy
 import torch
 import gc
+import json
 import fire
 import matplotlib.pyplot as plt
 import numpy as np
 from collections import defaultdict
 from utils import (
     get_qkov_weight,
-    get_configs,
-    create_folder,
+    get_config,
     load_model,
     inference_probs_and_errs,
     make_input_ids,
@@ -24,19 +24,20 @@ def projection_edit(
     P,
     component,
 ):
-    if model_name in ["llama2-7b", "gemma-7b"]:
-        P_tensor = torch.tensor(P, device="cuda", dtype=torch.bfloat16)
-    else:
+    if model_name.startswith("gpt"):
         P_tensor = torch.tensor(P, device="cuda").float()
+    else:
+        P_tensor = torch.tensor(P, device="cuda", dtype=torch.bfloat16)
 
+    config = get_config(model_name)
     for layer, head in layer_head_pairs:
         if component == "QK":
-            W = get_qkov_weight(model, model_name, layer, head, "k")
+            W = get_qkov_weight(model, model_name, config, layer, head, "k")
             W.copy_(P_tensor @ copy.deepcopy(W))
 
         elif component == "OV":
-            W = get_qkov_weight(model, model_name, layer, head, "o")
-            W.copy_(copy.deepcopy(W) @ P_tensor)
+            W = get_qkov_weight(model, model_name, config, layer, head, "o")
+            W.copy_(P_tensor @ copy.deepcopy(W))
 
     return model
 
@@ -126,7 +127,6 @@ def proj_exp(
     proj_out,
     rank_max,
     rank_step,
-    save_to,
 ):
     IH = torch.load(f"checkpoints/{model_name}/IH.pt")
     PTH = torch.load(f"checkpoints/{model_name}/PTH.pt")
@@ -140,22 +140,22 @@ def proj_exp(
         batch_size=batch_size,
         seg_len=seg_len,
         rep=rep,
-        vocab_size=get_configs(model_name)[-1],
+        vocab_size=get_config(model_name).vocab_size,
         seed=2024,
-        prepend_bos=model_name == "gemma-7b",
+        prepend_bos=model_name in ["gemma-7b", "llama2-7b", "mistral-7b"],
+        bos={"llama2-7b": 1, "gemma-7b": 2, "mistral-7b": 1}.get(model_name, None),
     )
 
     Vt = calc_V(
         W_all,
         IH[:K0],
-        use_R=model_name in ["llama2-7b", "gemma-7b"],
+        use_R=model_name not in ["gpt2-xl", "gpt2"],
         max_rel_dist=seg_len,
     )
 
     layer_head_pairs = IH[:K1] if component == "QK" else PTH[:K1]
 
     for rank in range(0, rank_max + 1, rank_step):
-        print("RANK", rank)
         P = Vt_to_projection(Vt, rank, proj_out)
 
         model = load_model(model_name)
@@ -175,12 +175,19 @@ def proj_exp(
         torch.cuda.empty_cache()
         gc.collect()
 
-        print("ERR", errs[rank].mean())
-        print("PROB", probs[rank].mean())
-
-    plot(probs, errs, rank_max, rank_step, save_to)
-
     return probs, errs
+
+
+def jsonify(metrics, save_to):
+    metrics_json = []
+    for name in metrics:
+        metrics_json.append(
+            {"name": name, "metric": np.mean(metrics[name], axis=0).tolist()}
+        )
+    with open(save_to, "w") as f:
+        json.dump(metrics_json, f)
+
+    print(f"Saved to {save_to}")
 
 
 def main(
@@ -197,9 +204,8 @@ def main(
     rank_max=100,
     rank_step=5,
 ):
-    create_folder("Figs/proj")
 
-    proj_exp(
+    probs, errs = proj_exp(
         model_name=model_name,
         batch_size=batch_size,
         rep=rep,
@@ -212,7 +218,22 @@ def main(
         component=component,
         rank_max=rank_max,
         rank_step=rank_step,
-        save_to=f"Figs/proj/{model_name}_{component}_proj{proj_out}_K0_{K0}_K1_{K1}.png",
+    )
+
+    jsonify(
+        probs,
+        save_to=f"out/{model_name}/proj_probs_{component}_proj_{proj_out}_{K0}_{K1}.json",
+    )
+    jsonify(
+        errs,
+        save_to=f"out/{model_name}/proj_errs_{component}_proj_{proj_out}_{K0}_{K1}.json",
+    )
+    plot(
+        probs,
+        errs,
+        rank_max,
+        rank_step,
+        save_to=f"out/{model_name}/Figs/{component}_proj_{proj_out}_{K0}_{K1}.png",
     )
 
 
