@@ -6,5 +6,5 @@ MODEL_NAMES=("gpt2" "gpt2-xl" "llama2-7b" "gemma-7b" "falcon-7b" "mistral-7b" "o
 for model in "${MODEL_NAMES[@]}";
 do
     echo "SUBSPACE...ING $model"
-    python subspace.py --model_name=$model --K=10 --rank=10 --method="largest"
+    python subspace.py --model_name=$model --K=40 --rank=10 --method="largest"
 done
