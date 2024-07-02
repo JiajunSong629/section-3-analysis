@@ -1,12 +1,54 @@
+import json
 import torch
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-from tqdm import tqdm
 import torch
 import fire
 
 from utils import calc_QK_OV, create_folder
+
+
+def jsonify(scores, IH, PTH, save_to):
+    K0, K1 = scores.shape
+    idx_sort = np.argsort(scores, axis=None)[::-1]
+
+    arr_json = []
+    for idx in idx_sort:
+        i, j = idx // K1, idx % K1
+        Li, Hi = IH[i]
+        Lj, Hj = PTH[j]
+        arr_json.append(
+            {
+                "IH": (int(Li), int(Hi)),
+                "PTH": (int(Lj), int(Hj)),
+                "score": scores[i, j],
+            }
+        )
+
+    with open(save_to, "w") as f:
+        json.dump(arr_json, f)
+
+    print(f"Saved to {save_to}")
+
+
+def select_IH_PTH(scores, IH, PTH, threshold=2):
+    K0, K1 = scores.shape
+    idx_sort = np.argsort(scores, axis=None)[::-1]
+
+    IH_selected, PTH_selected = [], []
+    for idx in idx_sort:
+        i, j = idx // K1, idx % K1
+        if scores[i, j] < threshold:
+            break
+
+        IH_selected.append(IH[i])
+        PTH_selected.append(PTH[j])
+
+    IH_selected = list(set(IH_selected))
+    PTH_selected = list(set(PTH_selected))
+
+    return IH_selected, PTH_selected
 
 
 def qkov_matching_summary(W_all, IH, PTH):
@@ -44,21 +86,26 @@ def plot(scores_nml, IH, PTH, save_to):
     plt.close()
 
 
-def main(model_name, K=10):
-    create_folder("Figs")
-    create_folder("Figs/diagonal")
+def main(model_name, K=20):
+    # create_folder("Figs")
+    # create_folder("Figs/diagonal")
+    create_folder(f"out/{model_name}/Figs")
 
     W_all = torch.load(f"checkpoints/{model_name}/W_all.pt")
     IH = torch.load(f"checkpoints/{model_name}/IH.pt")[:K]
     PTH = torch.load(f"checkpoints/{model_name}/PTH.pt")[:K]
 
     scores = qkov_matching_summary(W_all, IH, PTH)
+
+    jsonify(scores, IH, PTH, save_to=f"out/{model_name}/diagonal.json")
     plot(
         scores,
         IH,
         PTH,
-        save_to=f"Figs/diagonal/{model_name}_IH_PTH_matching_{K}.png",
+        save_to=f"out/{model_name}/Figs/diagonal_matching_{K}.png",
     )
+
+    # IH_selected, PTH_selected = select_IH_PTH(scores, IH, PTH, threshold=2)
 
 
 if __name__ == "__main__":

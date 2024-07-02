@@ -61,9 +61,6 @@ def measure_IH_PTH(attentions, seg_len, is_IH):
         [idx_sort[j] // num_head, idx_sort[j] % num_head] for j in range(len(idx_sort))
     ]
 
-    # for layer, head in head_list[:20]:
-    #     print(f"Layer {layer} Head {head}: score {scores[layer, head]}")
-
     return head_list, scores
 
 
@@ -101,6 +98,7 @@ def main(
     seg_len=25,
     rep=2,
     seed=2024,
+    fetch_w_all=True,
 ):
     model = load_model(model_name)
 
@@ -111,7 +109,7 @@ def main(
         vocab_size=get_config(model_name).vocab_size,
         seed=seed,
         prepend_bos=model_name in ["gemma-7b", "llama2-7b", "mixtral-7b"],
-        bos={"llama2-7b": 1, "gemma-7b": 2, "mixtral-7b": 1}.get(model_name, None),
+        bos={"llama2-7b": 1, "gemma-7b": 2, "mistral-7b": 1}.get(model_name, None),
     )
 
     attentions = get_attentions(model, input_ids)
@@ -119,7 +117,6 @@ def main(
     PTH, scores_PTH = measure_IH_PTH(
         attentions=attentions, seg_len=seg_len, is_IH=False
     )
-    W_all = get_W_all(model=model, model_name=model_name)
 
     save_dir = f"checkpoints/{model_name}"
     create_folder(save_dir)
@@ -130,7 +127,10 @@ def main(
 
     torch.save(IH, f"{save_dir}/IH.pt")
     torch.save(PTH, f"{save_dir}/PTH.pt")
-    torch.save(W_all, f"{save_dir}/W_all.pt")
+
+    if fetch_w_all:
+        W_all = get_W_all(model=model, model_name=model_name)
+        torch.save(W_all, f"{save_dir}/W_all.pt")
 
 
 if __name__ == "__main__":

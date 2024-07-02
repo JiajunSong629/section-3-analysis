@@ -12,21 +12,31 @@ from utils import (
     load_model,
     get_config,
     get_qkov_weight,
+    set_seed,
 )
 
 
-def collect_random_layer_head_pairs(model_name, K):
+def collect_random_layer_head_pairs(model_name, layer_head_pairs):
     config = get_config(model_name)
     num_head = config.num_attention_heads
-    num_layer = config.num_hidden_layers
 
     LH = []
-    while len(LH) < K:
-        layer = np.random.randint(low=1, high=num_layer - 1)
-        head = np.random.randint(low=0, high=num_head)
-        if [layer, head] not in LH:
-            LH.append([layer, head])
+    for layer, head in layer_head_pairs:
+        flag = True
+        while flag:
+            head_rand = np.random.randint(low=0, high=num_head)
+            flag = head_rand == head
+        LH.append([layer, head_rand])
+
+    np.random.shuffle(LH)
     return LH
+
+
+# (5, 10), (8, 20)
+# (5, 13), (8, 14)
+
+# (5, 10) <-> (8, 14)
+# (8, 20) <-> (5, 13)
 
 
 def collect_components_to_copy(model, model_name, layer_head_pairs):
@@ -50,29 +60,39 @@ def exchange_edit(
     layer_head_pairs,
     component="QK",
     type="original",
-    seed=2024,
 ):
-    np.random.seed(seed)
 
     K = len(layer_head_pairs)
-
     if type == "original":
-        return model
+        return model, {}
     elif type == "random baseline":
-        layer_head_pairs_1 = collect_random_layer_head_pairs(model_name, K)
-    else:
+        shuffle_layer_head_pairs = []
+        to_copy = []
+        for lh1, lh2 in zip(
+            layer_head_pairs,
+            collect_random_layer_head_pairs(model_name, layer_head_pairs),
+        ):
+            shuffle_layer_head_pairs.append((lh1, lh2))
+            shuffle_layer_head_pairs.append((lh2, lh1))
+            to_copy += [lh1, lh2]
+
+    elif type == "shuffle":
         perm = torch.randperm(K)
-        layer_head_pairs_1 = [layer_head_pairs[perm[j]] for j in range(K)]
+        shuffle_layer_head_pairs = [
+            (lh1, lh2)
+            for lh1, lh2 in zip(
+                layer_head_pairs, [layer_head_pairs[perm[j]] for j in range(K)]
+            )
+        ]
+        to_copy = layer_head_pairs.copy()
 
     components_copy = collect_components_to_copy(
         model=model,
         model_name=model_name,
-        layer_head_pairs=layer_head_pairs_1,
+        layer_head_pairs=to_copy,
     )
 
-    for (layer, head), (layer_perm, head_perm) in zip(
-        layer_head_pairs, layer_head_pairs_1
-    ):
+    for (layer, head), (layer_perm, head_perm) in shuffle_layer_head_pairs:
         for name in list(component):
             component_name = f"L_{layer_perm}_H_{head_perm}_{name}_weight"
             w = get_qkov_weight(
@@ -85,31 +105,50 @@ def exchange_edit(
             )
             w.copy_(components_copy[component_name])
 
-    return model
+    return model, shuffle_layer_head_pairs
 
 
-def plot(probs, errs, save_to):
-    fig, axs = plt.subplots(2, 2, figsize=(6 * 2, 6 * 2))
+# def plot(probs, errs, save_to):
+#     fig, axs = plt.subplots(2, 2, figsize=(6 * 2, 6 * 2))
 
-    for name in probs:
-        ave_probs = np.mean(probs[name], axis=0)
-        ave_errs = np.mean(errs[name], axis=0)
-        axs[0, 0].plot(range(len(ave_probs)), ave_probs, "-o", label=name)
-        axs[0, 1].plot(range(len(ave_errs)), ave_errs, "-o", label=name)
+#     for name in probs:
+#         ave_probs = np.mean(probs[name], axis=0)
+#         ave_errs = np.mean(errs[name], axis=0)
+#         axs[0, 0].plot(range(len(ave_probs)), ave_probs, "-o", label=name)
+#         axs[0, 1].plot(range(len(ave_errs)), ave_errs, "-o", label=name)
 
-        axs[1, 0].hist(ave_probs, label=name, alpha=0.3)
-        axs[1, 1].hist(ave_errs, label=name, alpha=0.3)
+#         axs[1, 0].hist(ave_probs, label=name, alpha=0.3)
+#         axs[1, 1].hist(ave_errs, label=name, alpha=0.3)
 
+#     for j in range(2):
+#         titles = [f"Pred {a} under shuffling" for a in ["probs", "errs"]]
+#         axs[0, j].set_xlabel("Token position", weight="bold")
+#         axs[0, j].set_ylabel("Target token pred probs/errs", weight="bold")
+#         axs[0, j].set_title(titles[j], weight="bold")
+
+#     axs[0, 0].legend()
+#     axs[0, 1].legend()
+#     axs[1, 0].legend()
+#     axs[1, 1].legend()
+
+#     plt.savefig(save_to, bbox_inches="tight")
+#     plt.close()
+
+
+def plot(result, save_to):
+    fig, axs = plt.subplots(1, 2, figsize=(6 * 2, 6 * 1))
+    for exp_id in result:
+        prob, err = result[exp_id]["prob"], result[exp_id]["err"]
+        avg_prob, avg_err = np.mean(prob, axis=0), np.mean(err, axis=0)
+        axs[0].plot(range(len(avg_prob)), avg_prob, "-o", label=exp_id)
+        axs[1].plot(range(len(avg_err)), avg_err, "-o", label=exp_id)
+
+    titles = [f"Pred {a} under shuffling" for a in ["probs", "errs"]]
     for j in range(2):
-        titles = [f"Pred {a} under shuffling" for a in ["probs", "errs"]]
-        axs[0, j].set_xlabel("Token position", weight="bold")
-        axs[0, j].set_ylabel("Target token pred probs/errs", weight="bold")
-        axs[0, j].set_title(titles[j], weight="bold")
-
-    axs[0, 0].legend()
-    axs[0, 1].legend()
-    axs[1, 0].legend()
-    axs[1, 1].legend()
+        axs[j].set_xlabel("Token position", weight="bold")
+        axs[j].set_ylabel("Target token pred probs/errs", weight="bold")
+        axs[j].set_title(titles[j], weight="bold")
+        axs[j].legend()
 
     plt.savefig(save_to, bbox_inches="tight")
     plt.close()
@@ -125,62 +164,73 @@ def shuffle_exp(
     layer_head_pairs,
     component,
     n_exp,
-    seed,
 ):
     T_range = range(seg_len * ignore_segment + ignore_burning, rep * seg_len - 1)
-    probs = defaultdict(list)
-    errs = defaultdict(list)
+    # 25 + 4 : 25 * 3
+
+    result = {}
 
     input_ids = make_input_ids(
         batch_size=batch_size,
         seg_len=seg_len,
         rep=rep,
         vocab_size=get_config(model_name).vocab_size,
-        seed=2024,
         prepend_bos=model_name in ["gemma-7b", "llama2-7b", "mixtral-7b"],
         bos={"llama2-7b": 1, "gemma-7b": 2, "mistral-7b": 1}.get(model_name, None),
     )
 
-    for name in ["original", "random baseline", "shuffle"]:
-        # print("NAME", name)
+    exp_ids = (
+        ["original"]
+        + [f"random baseline {i}" for i in range(1, n_exp + 1)]
+        + [f"shuffle {i}" for i in range(1, n_exp + 1)]
+    )
 
-        for _ in range(n_exp):
+    for exp_id in exp_ids:
+        if exp_id.startswith("original"):
+            type = "original"
+        elif exp_id.startswith("random baseline"):
+            type = "random baseline"
+        elif exp_id.startswith("shuffle"):
+            type = "shuffle"
 
-            model = load_model(model_name)
-            model_edit = exchange_edit(
-                model=model,
-                model_name=model_name,
-                layer_head_pairs=layer_head_pairs,
-                component=component,
-                type=name,
-                seed=seed,
-            )
-
-            prob, err = inference_probs_and_errs(model_edit, input_ids)
-            probs[name].append(prob[:, T_range])
-            errs[name].append(err[:, T_range])
-
-            del model_edit, model
-            torch.cuda.empty_cache()
-            gc.collect()
-
-        probs[name] = np.vstack(probs[name])
-        errs[name] = np.vstack(errs[name])
-
-        # print("ERR", errs[name].mean())
-        # print("PROB", probs[name].mean())
-
-    return probs, errs
-
-
-def jsonify(metrics, save_to):
-    metrics_json = []
-    for name in metrics:
-        metrics_json.append(
-            {"name": name, "metric": np.mean(metrics[name], axis=0).tolist()}
+        model = load_model(model_name)
+        model_edit, layer_head_pairs_map = exchange_edit(
+            model=model,
+            model_name=model_name,
+            layer_head_pairs=layer_head_pairs,
+            component=component,
+            type=type,
         )
+
+        prob, err = inference_probs_and_errs(model_edit, input_ids)
+        result[exp_id] = {
+            "prob": prob[:, T_range],
+            "err": err[:, T_range],
+            "shuffled_layer_head_map": layer_head_pairs_map,
+        }
+
+        del model_edit, model
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    return result
+
+
+def convert_np_to_list(obj):
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {k: convert_np_to_list(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_np_to_list(item) for item in obj]
+    else:
+        return obj
+
+
+def jsonify(result: dict, save_to):
+    result_json = convert_np_to_list(result)
     with open(save_to, "w") as f:
-        json.dump(metrics_json, f)
+        json.dump(result_json, f)
 
     print(f"Saved to {save_to}")
 
@@ -195,43 +245,50 @@ def main(
     ignore_segment=1,
     ignore_burning=4,
     seed=2024,
+    method=None,
 ):
+    set_seed(seed)
 
-    IH = torch.load(f"checkpoints/{model_name}/IH.pt")
-    PTH = torch.load(f"checkpoints/{model_name}/PTH.pt")
+    if method is None:
+        IH = torch.load(f"checkpoints/{model_name}/IH.pt")[:K]
+        PTH = torch.load(f"checkpoints/{model_name}/PTH.pt")[:K]
+    elif method == "subset":
+        IH = torch.load(f"checkpoints/{model_name}/IH_subset.pt")
+        PTH = torch.load(f"checkpoints/{model_name}/PTH_subset.pt")
 
-    print("K", K)
-    probs, errs = shuffle_exp(
+    result = shuffle_exp(
         model_name=model_name,
         batch_size=batch_size,
         seg_len=seg_len,
         rep=rep,
         n_exp=n_exp,
-        layer_head_pairs=IH[:K],
+        layer_head_pairs=IH,
         component="QK",
         ignore_burning=ignore_burning,
         ignore_segment=ignore_segment,
-        seed=seed,
     )
-    jsonify(probs, save_to=f"out/{model_name}/shuffle_probs_QK_{K}.json")
-    jsonify(errs, save_to=f"out/{model_name}/shuffle_errs_QK_{K}.json")
-    plot(probs, errs, save_to=f"out/{model_name}/Figs/shuffle_QK_{K}.png")
+    K = len(IH)
+    jsonify(result, save_to=f"out/{model_name}/shuffle_result_QK_{K}_{method}.json")
+    # jsonify(probs, save_to=f"out/{model_name}/shuffle_probs_QK_{K}_{method}.json")
+    # jsonify(errs, save_to=f"out/{model_name}/shuffle_errs_QK_{K}_{method}.json")
+    plot(result, save_to=f"out/{model_name}/Figs/shuffle_QK_{K}_{method}.png")
 
-    probs, errs = shuffle_exp(
+    result = shuffle_exp(
         model_name=model_name,
         batch_size=batch_size,
         seg_len=seg_len,
         rep=rep,
-        layer_head_pairs=PTH[:K],
+        layer_head_pairs=PTH,
         component="OV",
         n_exp=n_exp,
         ignore_burning=ignore_burning,
         ignore_segment=ignore_segment,
-        seed=seed,
     )
-    jsonify(probs, save_to=f"out/{model_name}/shuffle_probs_OV_{K}.json")
-    jsonify(errs, save_to=f"out/{model_name}/shuffle_errs_OV_{K}.json")
-    plot(probs, errs, save_to=f"out/{model_name}/Figs/shuffle_OV_{K}.png")
+    K = len(PTH)
+    jsonify(result, save_to=f"out/{model_name}/shuffle_result_OV_{K}_{method}.json")
+    # jsonify(probs, save_to=f"out/{model_name}/shuffle_probs_OV_{K}_{method}.json")
+    # jsonify(errs, save_to=f"out/{model_name}/shuffle_errs_OV_{K}_{method}.json")
+    plot(result, save_to=f"out/{model_name}/Figs/shuffle_OV_{K}_{method}.png")
 
 
 if __name__ == "__main__":

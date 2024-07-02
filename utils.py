@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 import os
 import numpy as np
+import random
 from transformers import (
     GPT2LMHeadModel,
     GemmaForCausalLM,
@@ -17,6 +18,14 @@ from transformers import (
 def create_folder(dir):
     if not os.path.isdir(dir):
         os.mkdir(dir)
+
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU.
+    np.random.seed(seed)  # Numpy module.
+    random.seed(seed)  # Python random module.
 
 
 def calc_QK_OV(W_all, layer, head, QK=False, OV=False, return_original=False):
@@ -251,12 +260,9 @@ def make_input_ids(
     seg_len,
     rep,
     vocab_size,
-    seed=None,
     prepend_bos=False,
     bos=None,
 ):
-    if seed:
-        np.random.seed(seed)
 
     # draw batch of random tokens and make repetitions
     sample_int = np.random.randint(

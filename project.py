@@ -5,7 +5,6 @@ import json
 import fire
 import matplotlib.pyplot as plt
 import numpy as np
-from collections import defaultdict
 from utils import (
     get_qkov_weight,
     get_config,
@@ -14,6 +13,7 @@ from utils import (
     make_input_ids,
     custom_svd,
     calc_rotary_R_mat,
+    set_seed,
 )
 
 
@@ -43,31 +43,28 @@ def projection_edit(
 
 
 def plot(
-    probs,
-    errs,
-    rank_max,
-    rank_step,
+    result,
     save_to,
 ):
     # make plots
     fig, axs = plt.subplots(1, 2, figsize=(6 * 2, 6 * 1))
-    ave_probs = [np.mean(vals) for vals in probs.values()]
-    ave_errs = [np.mean(vals) for vals in errs.values()]
 
-    axs[0].plot(
-        range(0, rank_max + 1, rank_step)[1:],
-        ave_probs[1:],
-        "-o",
-        label="projected",
-    )
-    axs[1].plot(
-        range(0, rank_max + 1, rank_step)[1:],
-        ave_errs[1:],
-        "-o",
-        label="projected",
-    )
-    axs[0].axhline(y=ave_probs[0], linestyle="dashed", label="original")
-    axs[1].axhline(y=ave_errs[0], linestyle="dashed", label="original")
+    ranks, probs, errs = [], [], []
+    for rank in result:
+        prob, err = result[rank]["prob"], result[rank]["err"]
+        avg_prob, avg_err = np.mean(prob), np.mean(err)
+        if rank == 0:
+            baseline_prob = avg_prob
+            baseline_err = avg_err
+        else:
+            ranks.append(rank)
+            probs.append(avg_prob)
+            errs.append(avg_err)
+
+    axs[0].plot(ranks, probs, "-o", label="projected")
+    axs[1].plot(ranks, errs, "-o", label="projected")
+    axs[0].axhline(y=baseline_prob, linestyle="dashed", label="original")
+    axs[1].axhline(y=baseline_err, linestyle="dashed", label="original")
 
     for j in range(2):
         titles = [f"Pred {a} under projection" for a in ["probs", "errs"]]
@@ -77,6 +74,7 @@ def plot(
         axs[j].set_title(titles[j], weight="bold")
 
     axs[0].legend()
+    axs[1].legend()
     plt.savefig(save_to, bbox_inches="tight")
     plt.close()
 
@@ -121,43 +119,34 @@ def proj_exp(
     rep,
     ignore_segment,
     ignore_burning,
-    K0,
-    K1,
+    IH_proj,
+    layer_head_pairs,
     component,
     proj_out,
     rank_max,
     rank_step,
 ):
-    IH = torch.load(f"checkpoints/{model_name}/IH.pt")
-    PTH = torch.load(f"checkpoints/{model_name}/PTH.pt")
     W_all = torch.load(f"checkpoints/{model_name}/W_all.pt")
-
     T_range = range(seg_len * ignore_segment + ignore_burning, rep * seg_len - 1)
-    probs = defaultdict(list)
-    errs = defaultdict(list)
-
     input_ids = make_input_ids(
         batch_size=batch_size,
         seg_len=seg_len,
         rep=rep,
         vocab_size=get_config(model_name).vocab_size,
-        seed=2024,
         prepend_bos=model_name in ["gemma-7b", "llama2-7b", "mistral-7b"],
         bos={"llama2-7b": 1, "gemma-7b": 2, "mistral-7b": 1}.get(model_name, None),
     )
 
     Vt = calc_V(
         W_all,
-        IH[:K0],
+        IH_proj,
         use_R=model_name not in ["gpt2-xl", "gpt2"],
         max_rel_dist=seg_len,
     )
 
-    layer_head_pairs = IH[:K1] if component == "QK" else PTH[:K1]
-
+    result = {}
     for rank in range(0, rank_max + 1, rank_step):
         P = Vt_to_projection(Vt, rank, proj_out)
-
         model = load_model(model_name)
         model_edit = projection_edit(
             model=model,
@@ -168,24 +157,33 @@ def proj_exp(
         )
 
         prob, err = inference_probs_and_errs(model_edit, input_ids)
-        probs[rank] = prob[:, T_range]
-        errs[rank] = err[:, T_range]
+        result[rank] = {
+            "prob": prob[:, T_range],
+            "err": err[:, T_range],
+        }
 
         del model_edit, model
         torch.cuda.empty_cache()
         gc.collect()
 
-    return probs, errs
+    return result
 
 
-def jsonify(metrics, save_to):
-    metrics_json = []
-    for name in metrics:
-        metrics_json.append(
-            {"name": name, "metric": np.mean(metrics[name], axis=0).tolist()}
-        )
+def convert_np_to_list(obj):
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {k: convert_np_to_list(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_np_to_list(item) for item in obj]
+    else:
+        return obj
+
+
+def jsonify(result: dict, save_to):
+    result_json = convert_np_to_list(result)
     with open(save_to, "w") as f:
-        json.dump(metrics_json, f)
+        json.dump(result_json, f)
 
     print(f"Saved to {save_to}")
 
@@ -203,17 +201,37 @@ def main(
     K1=30,
     rank_max=100,
     rank_step=5,
+    method=None,
+    seed=2024,
 ):
 
-    probs, errs = proj_exp(
+    set_seed(seed)
+
+    if method is None:
+        IH = torch.load(f"checkpoints/{model_name}/IH.pt")[:K1]
+        PTH = torch.load(f"checkpoints/{model_name}/PTH.pt")[:K1]
+        IH_proj = torch.load(f"checkpoints/{model_name}/IH.pt")[:K0]
+        method = ""
+    elif method == "subset":
+        IH = torch.load(f"checkpoints/{model_name}/IH_subset.pt")
+        PTH = torch.load(f"checkpoints/{model_name}/PTH_subset.pt")
+        IH_proj = torch.load(f"checkpoints/{model_name}/IH_subset.pt")
+
+    if component == "QK":
+        layer_head_pairs = IH
+    elif component == "OV":
+        layer_head_pairs = PTH
+    K0, K1 = len(IH_proj), len(layer_head_pairs)
+
+    result = proj_exp(
         model_name=model_name,
         batch_size=batch_size,
         rep=rep,
         seg_len=seg_len,
         ignore_segment=ignore_segment,
         ignore_burning=ignore_burning,
-        K0=K0,
-        K1=K1,
+        IH_proj=IH_proj,
+        layer_head_pairs=layer_head_pairs,
         proj_out=proj_out,
         component=component,
         rank_max=rank_max,
@@ -221,19 +239,12 @@ def main(
     )
 
     jsonify(
-        probs,
-        save_to=f"out/{model_name}/proj_probs_{component}_proj_{proj_out}_{K0}_{K1}.json",
-    )
-    jsonify(
-        errs,
-        save_to=f"out/{model_name}/proj_errs_{component}_proj_{proj_out}_{K0}_{K1}.json",
+        result,
+        save_to=f"out/{model_name}/proj_{component}_proj_{proj_out}_{K0}_{K1}_{method}.json",
     )
     plot(
-        probs,
-        errs,
-        rank_max,
-        rank_step,
-        save_to=f"out/{model_name}/Figs/{component}_proj_{proj_out}_{K0}_{K1}.png",
+        result,
+        save_to=f"out/{model_name}/Figs/{component}_proj_{proj_out}_{K0}_{K1}_{method}.png",
     )
 
 
