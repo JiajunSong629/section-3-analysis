@@ -64,7 +64,7 @@ def exchange_edit(
 
     K = len(layer_head_pairs)
     if type == "original":
-        return model, {}
+        return model, []
     elif type == "random baseline":
         shuffle_layer_head_pairs = []
         to_copy = []
@@ -72,14 +72,14 @@ def exchange_edit(
             layer_head_pairs,
             collect_random_layer_head_pairs(model_name, layer_head_pairs),
         ):
-            shuffle_layer_head_pairs.append((lh1, lh2))
-            shuffle_layer_head_pairs.append((lh2, lh1))
+            shuffle_layer_head_pairs.append([lh1, lh2])
+            shuffle_layer_head_pairs.append([lh2, lh1])
             to_copy += [lh1, lh2]
 
     elif type == "shuffle":
         perm = torch.randperm(K)
         shuffle_layer_head_pairs = [
-            (lh1, lh2)
+            [lh1, lh2]
             for lh1, lh2 in zip(
                 layer_head_pairs, [layer_head_pairs[perm[j]] for j in range(K)]
             )
@@ -106,33 +106,6 @@ def exchange_edit(
             w.copy_(components_copy[component_name])
 
     return model, shuffle_layer_head_pairs
-
-
-# def plot(probs, errs, save_to):
-#     fig, axs = plt.subplots(2, 2, figsize=(6 * 2, 6 * 2))
-
-#     for name in probs:
-#         ave_probs = np.mean(probs[name], axis=0)
-#         ave_errs = np.mean(errs[name], axis=0)
-#         axs[0, 0].plot(range(len(ave_probs)), ave_probs, "-o", label=name)
-#         axs[0, 1].plot(range(len(ave_errs)), ave_errs, "-o", label=name)
-
-#         axs[1, 0].hist(ave_probs, label=name, alpha=0.3)
-#         axs[1, 1].hist(ave_errs, label=name, alpha=0.3)
-
-#     for j in range(2):
-#         titles = [f"Pred {a} under shuffling" for a in ["probs", "errs"]]
-#         axs[0, j].set_xlabel("Token position", weight="bold")
-#         axs[0, j].set_ylabel("Target token pred probs/errs", weight="bold")
-#         axs[0, j].set_title(titles[j], weight="bold")
-
-#     axs[0, 0].legend()
-#     axs[0, 1].legend()
-#     axs[1, 0].legend()
-#     axs[1, 1].legend()
-
-#     plt.savefig(save_to, bbox_inches="tight")
-#     plt.close()
 
 
 def plot(result, save_to):
@@ -166,8 +139,6 @@ def shuffle_exp(
     n_exp,
 ):
     T_range = range(seg_len * ignore_segment + ignore_burning, rep * seg_len - 1)
-    # 25 + 4 : 25 * 3
-
     result = {}
 
     input_ids = make_input_ids(
@@ -223,8 +194,10 @@ def convert_np_to_list(obj):
         return {k: convert_np_to_list(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [convert_np_to_list(item) for item in obj]
-    else:
-        return obj
+    elif isinstance(obj, np.int64):
+        return int(obj)
+
+    return obj
 
 
 def jsonify(result: dict, save_to):
@@ -252,9 +225,11 @@ def main(
     if method is None:
         IH = torch.load(f"checkpoints/{model_name}/IH.pt")[:K]
         PTH = torch.load(f"checkpoints/{model_name}/PTH.pt")[:K]
+        method = ""
     elif method == "subset":
         IH = torch.load(f"checkpoints/{model_name}/IH_subset.pt")
         PTH = torch.load(f"checkpoints/{model_name}/PTH_subset.pt")
+        method = "_subset"
 
     result = shuffle_exp(
         model_name=model_name,
@@ -268,10 +243,8 @@ def main(
         ignore_segment=ignore_segment,
     )
     K = len(IH)
-    jsonify(result, save_to=f"out/{model_name}/shuffle_result_QK_{K}_{method}.json")
-    # jsonify(probs, save_to=f"out/{model_name}/shuffle_probs_QK_{K}_{method}.json")
-    # jsonify(errs, save_to=f"out/{model_name}/shuffle_errs_QK_{K}_{method}.json")
-    plot(result, save_to=f"out/{model_name}/Figs/shuffle_QK_{K}_{method}.png")
+    jsonify(result, save_to=f"out/{model_name}/shuffle_result_QK_{K}{method}.json")
+    plot(result, save_to=f"out/{model_name}/Figs/shuffle_QK_{K}{method}.png")
 
     result = shuffle_exp(
         model_name=model_name,
@@ -285,10 +258,8 @@ def main(
         ignore_segment=ignore_segment,
     )
     K = len(PTH)
-    jsonify(result, save_to=f"out/{model_name}/shuffle_result_OV_{K}_{method}.json")
-    # jsonify(probs, save_to=f"out/{model_name}/shuffle_probs_OV_{K}_{method}.json")
-    # jsonify(errs, save_to=f"out/{model_name}/shuffle_errs_OV_{K}_{method}.json")
-    plot(result, save_to=f"out/{model_name}/Figs/shuffle_OV_{K}_{method}.png")
+    jsonify(result, save_to=f"out/{model_name}/shuffle_result_OV_{K}{method}.json")
+    plot(result, save_to=f"out/{model_name}/Figs/shuffle_OV_{K}{method}.png")
 
 
 if __name__ == "__main__":

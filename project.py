@@ -176,8 +176,10 @@ def convert_np_to_list(obj):
         return {k: convert_np_to_list(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [convert_np_to_list(item) for item in obj]
-    else:
-        return obj
+    elif isinstance(obj, np.int64):
+        return int(obj)
+
+    return obj
 
 
 def jsonify(result: dict, save_to):

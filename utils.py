@@ -185,17 +185,6 @@ def load_model(model_name):
 
 
 def get_config(model_name):
-    # num_layer, num_head, d_model, d_head, vocab_size = {
-    #     "gpt2": (12, 12, 768, 64, 50257),
-    #     "gpt2-xl": (48, 25, 1600, 64, 50257),
-    #     "llama2-7b": (32, 32, 4096, 128, 32000),
-    #     "gemma-7b": (28, 16, 3072, 256, 256000),
-    #     "falcon-7b": (32, 71, 4544, 64, 65024),
-    #     "mistral-7b": (32, 32, 4096, 128, 32000),
-    #     "olmo-7b": (32, 32, 4096, 128, 50304),
-    #     "pythia-7b": (32, 32, 4096, 128, 50432),
-    # }[model_name]
-
     model_name_hf = {
         "gpt2": "gpt2",
         "gpt2-xl": "gpt2-xl",
