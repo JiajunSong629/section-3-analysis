@@ -143,6 +143,10 @@ def proj_exp(
         use_R=model_name not in ["gpt2-xl", "gpt2"],
         max_rel_dist=seg_len,
     )
+    print(
+        "\n\nMODEL: ", model_name, component, proj_out, "K1 = ", len(layer_head_pairs)
+    )
+    print("-" * 50)
 
     result = {}
     for rank in range(0, rank_max + 1, rank_step):
@@ -161,6 +165,15 @@ def proj_exp(
             "prob": prob[:, T_range],
             "err": err[:, T_range],
         }
+
+        print(
+            "RANK",
+            rank,
+            ": PROB",
+            round(np.mean(result[rank]["prob"]), 2),
+            "ERR",
+            round(np.mean(result[rank]["err"]), 2),
+        )
 
         del model_edit, model
         torch.cuda.empty_cache()
@@ -200,24 +213,31 @@ def main(
     ignore_segment=1,
     ignore_burning=4,
     K0=10,
-    K1=30,
-    rank_max=100,
-    rank_step=5,
+    K1=None,
+    K1_prop=0.3,
+    rank_max=300,
+    rank_step=10,
     method=None,
     seed=2024,
 ):
 
     set_seed(seed)
+    IH = torch.load(f"checkpoints/{model_name}/IH.pt")
+    PTH = torch.load(f"checkpoints/{model_name}/PTH.pt")
+
+    if K1 is None:
+        IH = IH[: int(len(IH) * K1_prop)]
+        PTH = PTH[: int(len(PTH) * K1_prop)]
+    else:
+        IH = IH[:K1]
+        PTH = PTH[:K1]
 
     if method is None:
-        IH = torch.load(f"checkpoints/{model_name}/IH.pt")[:K1]
-        PTH = torch.load(f"checkpoints/{model_name}/PTH.pt")[:K1]
         IH_proj = torch.load(f"checkpoints/{model_name}/IH.pt")[:K0]
         method = ""
-    elif method == "subset":
-        IH = torch.load(f"checkpoints/{model_name}/IH_subset.pt")
-        PTH = torch.load(f"checkpoints/{model_name}/PTH_subset.pt")
-        IH_proj = torch.load(f"checkpoints/{model_name}/IH_subset.pt")
+    else:
+        IH_proj = torch.load(f"checkpoints/{model_name}/IH.pt")[:K0]
+        method = f"_{method}"
 
     if component == "QK":
         layer_head_pairs = IH
@@ -242,11 +262,11 @@ def main(
 
     jsonify(
         result,
-        save_to=f"out/{model_name}/proj_{component}_proj_{proj_out}_{K0}_{K1}_{method}.json",
+        save_to=f"out/{model_name}/proj_{component}_proj_{proj_out}_{K0}_{K1}{method}.json",
     )
     plot(
         result,
-        save_to=f"out/{model_name}/Figs/{component}_proj_{proj_out}_{K0}_{K1}_{method}.png",
+        save_to=f"out/{model_name}/Figs/{component}_proj_{proj_out}_{K0}_{K1}{method}.png",
     )
 
 

@@ -8,6 +8,7 @@ from utils import (
     make_input_ids,
     get_config,
     get_qkov_weight,
+    set_seed,
 )
 
 import warnings
@@ -100,6 +101,8 @@ def main(
     seed=2024,
     fetch_w_all=True,
 ):
+    set_seed(seed)
+
     model = load_model(model_name)
 
     input_ids = make_input_ids(
@@ -107,7 +110,6 @@ def main(
         seg_len=seg_len,
         rep=rep,
         vocab_size=get_config(model_name).vocab_size,
-        seed=seed,
         prepend_bos=model_name in ["gemma-7b", "llama2-7b", "mixtral-7b"],
         bos={"llama2-7b": 1, "gemma-7b": 2, "mistral-7b": 1}.get(model_name, None),
     )

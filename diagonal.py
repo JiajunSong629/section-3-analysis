@@ -87,8 +87,6 @@ def plot(scores_nml, IH, PTH, save_to):
 
 
 def main(model_name, K=20):
-    # create_folder("Figs")
-    # create_folder("Figs/diagonal")
     create_folder(f"out/{model_name}/Figs")
 
     W_all = torch.load(f"checkpoints/{model_name}/W_all.pt")
@@ -104,8 +102,6 @@ def main(model_name, K=20):
         PTH,
         save_to=f"out/{model_name}/Figs/diagonal_matching_{K}.png",
     )
-
-    # IH_selected, PTH_selected = select_IH_PTH(scores, IH, PTH, threshold=2)
 
 
 if __name__ == "__main__":

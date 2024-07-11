@@ -172,6 +172,15 @@ def load_model(model_name):
         )
         return pythia
 
+    def load_llama3_8b():
+        llama = AutoModelForCausalLM.from_pretrained(
+            "/home/jiajun/.cache/huggingface/hub/models--meta-llama--Llama-3-8b-hf",
+            output_attentions=True,
+            device_map="cuda",
+            torch_dtype=torch.bfloat16,
+        )
+        return llama
+
     return {
         "gpt2": load_gpt2,
         "gpt2-xl": load_gpt2xl,
@@ -181,6 +190,7 @@ def load_model(model_name):
         "mistral-7b": load_mistral_7b,
         "olmo-7b": load_olmo_7b,
         "pythia-7b": load_pythia_7b,
+        "llama3-8b": load_llama3_8b,
     }[model_name]()
 
 
@@ -194,6 +204,7 @@ def get_config(model_name):
         "mistral-7b": "mistralai/Mistral-7B-v0.1",
         "olmo-7b": "allenai/OLMo-1.7-7B-hf",
         "pythia-7b": "EleutherAI/pythia-6.9b",
+        "llama3-8b": "/home/jiajun/.cache/huggingface/hub/models--meta-llama--Llama-3-8b-hf",
     }[model_name]
     config = AutoConfig.from_pretrained(model_name_hf)
 
@@ -219,8 +230,8 @@ def get_qkov_weight(model, model_name, config, ilayer, ihead, component):
             "o": proj.weight[ihead * d_head : ihead * d_head + d_head, :].T,
         }[component].data
 
-    elif model_name in ["llama2-7b", "gemma-7b", "mistral-7b", "olmo-7b"]:
-        if model_name == "mistral-7b":
+    elif model_name in ["llama2-7b", "gemma-7b", "mistral-7b", "olmo-7b", "llama3-8b"]:
+        if model_name in ["mistral-7b", "llama3-8b"]:
             ikvhead = ihead * config.num_key_value_heads // num_head
         else:
             ikvhead = ihead
