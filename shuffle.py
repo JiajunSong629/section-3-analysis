@@ -16,27 +16,34 @@ from utils import (
 )
 
 
-def collect_random_layer_head_pairs(model_name, layer_head_pairs):
+# def collect_random_layer_head_pairs(model_name, layer_head_pairs):
+#     config = get_config(model_name)
+#     num_head = config.num_attention_heads
+
+#     LH = []
+#     for layer, head in layer_head_pairs:
+#         flag = True
+#         while flag:
+#             head_rand = np.random.randint(low=0, high=num_head)
+#             flag = head_rand == head
+#         LH.append([layer, head_rand])
+
+#     np.random.shuffle(LH)
+#     return LH
+
+
+def collect_random_layer_head_pairs(model_name, K):
     config = get_config(model_name)
     num_head = config.num_attention_heads
+    num_layer = config.num_hidden_layers
 
     LH = []
-    for layer, head in layer_head_pairs:
-        flag = True
-        while flag:
-            head_rand = np.random.randint(low=0, high=num_head)
-            flag = head_rand == head
-        LH.append([layer, head_rand])
-
-    np.random.shuffle(LH)
+    while len(LH) < K:
+        layer = np.random.randint(low=1, high=num_layer - 1)
+        head = np.random.randint(low=0, high=num_head)
+        if [layer, head] not in LH:
+            LH.append([layer, head])
     return LH
-
-
-# (5, 10), (8, 20)
-# (5, 13), (8, 14)
-
-# (5, 10) <-> (8, 14)
-# (8, 20) <-> (5, 13)
 
 
 def collect_components_to_copy(model, model_name, layer_head_pairs):
@@ -70,10 +77,9 @@ def exchange_edit(
         to_copy = []
         for lh1, lh2 in zip(
             layer_head_pairs,
-            collect_random_layer_head_pairs(model_name, layer_head_pairs),
+            collect_random_layer_head_pairs(model_name, K),
         ):
             shuffle_layer_head_pairs.append([lh1, lh2])
-            shuffle_layer_head_pairs.append([lh2, lh1])
             to_copy += [lh1, lh2]
 
     elif type == "shuffle":
@@ -165,7 +171,7 @@ def shuffle_exp(
             type = "shuffle"
 
         model = load_model(model_name)
-        model_edit, layer_head_pairs_map = exchange_edit(
+        model_edit, shuffle_layer_head_pairs = exchange_edit(
             model=model,
             model_name=model_name,
             layer_head_pairs=layer_head_pairs,
@@ -177,8 +183,19 @@ def shuffle_exp(
         result[exp_id] = {
             "prob": prob[:, T_range],
             "err": err[:, T_range],
-            "shuffled_layer_head_map": layer_head_pairs_map,
+            "shuffle_layer_head_pairs": shuffle_layer_head_pairs,
         }
+
+        print(
+            "RESULT",
+            exp_id,
+            ": SHUFFLE",
+            shuffle_layer_head_pairs,
+            "\nPROB",
+            round(np.mean(result[exp_id]["prob"]), 2),
+            "ERR",
+            round(np.mean(result[exp_id]["err"]), 2),
+        )
 
         del model_edit, model
         torch.cuda.empty_cache()
@@ -205,7 +222,7 @@ def jsonify(result: dict, save_to):
     with open(save_to, "w") as f:
         json.dump(result_json, f)
 
-    print(f"Saved to {save_to}")
+    print(f"Saved to {save_to}\n\n")
 
 
 def main(
@@ -226,10 +243,10 @@ def main(
         IH = torch.load(f"checkpoints/{model_name}/IH.pt")[:K]
         PTH = torch.load(f"checkpoints/{model_name}/PTH.pt")[:K]
         method = ""
-    elif method == "subset":
-        IH = torch.load(f"checkpoints/{model_name}/IH_subset.pt")
-        PTH = torch.load(f"checkpoints/{model_name}/PTH_subset.pt")
-        method = "_subset"
+    else:
+        IH = torch.load(f"checkpoints/{model_name}/IH_{method}.pt")[:K]
+        PTH = torch.load(f"checkpoints/{model_name}/PTH_{method}.pt")[:K]
+        method = f"_{method}"
 
     result = shuffle_exp(
         model_name=model_name,
