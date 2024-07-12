@@ -76,10 +76,14 @@ def get_W_all(model, model_name):
     for ilayer in range(num_layer):
         for ihead in range(num_head):
             for k, component in enumerate(list("qkvo")):
-                data = get_qkov_weight(
+                data: torch.Tensor = get_qkov_weight(
                     model, model_name, config, ilayer, ihead, component
-                ).cpu()
-                W_all[ilayer, ihead, k] = data
+                )
+                print(data.device, ilayer, ihead, component)
+                if data.is_cuda:
+                    W_all[ilayer, ihead, k] = data.cpu()
+                else:
+                    W_all[ilayer, ihead, k] = data
 
     return W_all
 

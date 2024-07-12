@@ -181,6 +181,29 @@ def load_model(model_name):
         )
         return llama
 
+    def load_falcon_11b():
+        from accelerate import (
+            init_empty_weights,
+            load_checkpoint_and_dispatch,
+            infer_auto_device_map,
+        )
+
+        with init_empty_weights():
+            model = AutoModelForCausalLM.from_pretrained(
+                "tiiuae/falcon-11B",
+                output_attentions=True,
+            )
+        device_map = infer_auto_device_map(
+            model, max_memory={0: "23GiB", "cpu": "50GiB"}
+        )
+        model = load_checkpoint_and_dispatch(
+            model,
+            "/home/jiajun/.cache/huggingface/hub/models--tiiuae--falcon-11B/snapshots/066e3bf4e2d9aaeefa129af0a6d39727d27816b3",
+            device_map=device_map,
+            dtype=torch.bfloat16,
+        )
+        return model
+
     return {
         "gpt2": load_gpt2,
         "gpt2-xl": load_gpt2xl,
@@ -191,6 +214,7 @@ def load_model(model_name):
         "olmo-7b": load_olmo_7b,
         "pythia-7b": load_pythia_7b,
         "llama3-8b": load_llama3_8b,
+        "falcon-11b": load_falcon_11b,
     }[model_name]()
 
 
@@ -205,6 +229,7 @@ def get_config(model_name):
         "olmo-7b": "allenai/OLMo-1.7-7B-hf",
         "pythia-7b": "EleutherAI/pythia-6.9b",
         "llama3-8b": "/home/jiajun/.cache/huggingface/hub/models--meta-llama--Llama-3-8b-hf",
+        "falcon-11b": "tiiuae/falcon-11B",
     }[model_name]
     config = AutoConfig.from_pretrained(model_name_hf)
 
@@ -245,12 +270,50 @@ def get_qkov_weight(model, model_name, config, ilayer, ihead, component):
         }[component].data
     elif model_name in ["falcon-7b"]:
         attn = model.transformer.h[ilayer].self_attention
-        splited = attn.query_key_value.weight.view(2 + num_head, d_head, d_model)
-        q, k, v = splited[:-2], splited[-2], splited[-1]
+        # splited = attn.query_key_value.weight.view(2 + num_head, d_head, d_model)
+        # q, k, v = splited[:-2], splited[-2], splited[-1]
+        # return {
+        #     "q": q[ihead].T,
+        #     "k": k.T,
+        #     "v": v.T,
+        #     "o": attn.dense.weight.T[ihead * d_head : ihead * d_head + d_head, :].T,
+        # }[component].data
+        splited = attn.query_key_value.weight.T.view(d_model, 2 + num_head, d_head)
+        q, k, v = splited[:, :-2], splited[:, -2], splited[:, -1]
         return {
-            "q": q[ihead].T,
-            "k": k.T,
-            "v": v.T,
+            "q": q[:, ihead],
+            "k": k,
+            "v": v,
+            "o": attn.dense.weight.T[ihead * d_head : ihead * d_head + d_head, :].T,
+        }[component].data
+
+    elif model_name in ["falcon-11b"]:
+        attn = model.transformer.h[ilayer].self_attention
+        splited = attn.query_key_value.weight.T.reshape(-1, 32 // 8 + 2, d_model)
+        q, k, v = splited[:, :-2], splited[:, [-2]], splited[:, [-1]]
+        k = torch.broadcast_to(k, q.shape)
+        v = torch.broadcast_to(v, q.shape)
+        q, k, v = [x.flatten(0, 1) for x in (q, k, v)]
+
+        return {
+            "q": q[ihead * d_head : ihead * d_head + d_head].T,
+            "k": k[ihead * d_head : ihead * d_head + d_head].T,
+            "v": v[ihead * d_head : ihead * d_head + d_head].T,
+            "o": attn.dense.weight.T[ihead * d_head : ihead * d_head + d_head, :].T,
+        }[component].data
+
+    elif model_name in ["pythia-7b"]:
+        attn = model.gpt_neox.layers[ilayer].attention
+        splited = attn.query_key_value.weight.T.view(d_model, num_head, 3 * d_head)
+        q, k, v = (
+            splited[:, :, :d_head],
+            splited[:, :, d_head : 2 * d_head],
+            splited[:, :, 2 * d_head :],
+        )
+        return {
+            "q": q[:, ihead],
+            "k": k[:, ihead],
+            "v": v[:, ihead],
             "o": attn.dense.weight.T[ihead * d_head : ihead * d_head + d_head, :].T,
         }[component].data
 
