@@ -1,20 +1,20 @@
 import copy
-import torch
-import numpy as np
-from collections import defaultdict
-import matplotlib.pyplot as plt
 import gc
 import json
+
 import fire
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+
 from utils import (
-    make_input_ids,
-    inference_probs_and_errs,
-    load_model,
     get_config,
     get_qkov_weight,
+    inference_probs_and_errs,
+    load_model,
+    make_input_ids,
     set_seed,
 )
-
 
 # def collect_random_layer_head_pairs(model_name, layer_head_pairs):
 #     config = get_config(model_name)
@@ -152,8 +152,10 @@ def shuffle_exp(
         seg_len=seg_len,
         rep=rep,
         vocab_size=get_config(model_name).vocab_size,
-        prepend_bos=model_name in ["gemma-7b", "llama2-7b", "mixtral-7b"],
-        bos={"llama2-7b": 1, "gemma-7b": 2, "mistral-7b": 1}.get(model_name, None),
+        prepend_bos=model_name in ["gemma-7b", "llama2-7b", "mixtral-7b", "gemma2-9b"],
+        bos={"llama2-7b": 1, "gemma-7b": 2, "mistral-7b": 1, "gemma2-9b": 2}.get(
+            model_name, None
+        ),
     )
 
     exp_ids = (

@@ -1,18 +1,20 @@
 import copy
-import torch
 import gc
 import json
+
 import fire
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
+
 from utils import (
-    get_qkov_weight,
-    get_config,
-    load_model,
-    inference_probs_and_errs,
-    make_input_ids,
-    custom_svd,
     calc_rotary_R_mat,
+    custom_svd,
+    get_config,
+    get_qkov_weight,
+    inference_probs_and_errs,
+    load_model,
+    make_input_ids,
     set_seed,
 )
 
@@ -133,8 +135,10 @@ def proj_exp(
         seg_len=seg_len,
         rep=rep,
         vocab_size=get_config(model_name).vocab_size,
-        prepend_bos=model_name in ["gemma-7b", "llama2-7b", "mistral-7b"],
-        bos={"llama2-7b": 1, "gemma-7b": 2, "mistral-7b": 1}.get(model_name, None),
+        prepend_bos=model_name in ["gemma-7b", "llama2-7b", "mistral-7b", "gemma2-9b"],
+        bos={"llama2-7b": 1, "gemma-7b": 2, "mistral-7b": 1, "gemma2-9b": 2}.get(
+            model_name, None
+        ),
     )
 
     Vt = calc_V(

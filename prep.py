@@ -1,17 +1,18 @@
-import torch
-import numpy as np
 import json
+import warnings
+
 import fire
+import numpy as np
+import torch
+
 from utils import (
     create_folder,
-    load_model,
-    make_input_ids,
     get_config,
     get_qkov_weight,
+    load_model,
+    make_input_ids,
     set_seed,
 )
-
-import warnings
 
 warnings.filterwarnings("ignore")
 
@@ -70,7 +71,10 @@ def get_W_all(model, model_name):
     num_layer = config.num_hidden_layers
     num_head = config.num_attention_heads
     d_model = config.hidden_size
-    d_head = d_model // num_head
+    if "head_dim" in vars(config):
+        d_head = vars(config)["head_dim"]
+    else:
+        d_head = d_model // num_head
 
     W_all = torch.zeros(num_layer, num_head, 4, d_model, d_head)
     for ilayer in range(num_layer):
@@ -79,7 +83,6 @@ def get_W_all(model, model_name):
                 data: torch.Tensor = get_qkov_weight(
                     model, model_name, config, ilayer, ihead, component
                 )
-                print(data.device, ilayer, ihead, component)
                 if data.is_cuda:
                     W_all[ilayer, ihead, k] = data.cpu()
                 else:
@@ -114,8 +117,10 @@ def main(
         seg_len=seg_len,
         rep=rep,
         vocab_size=get_config(model_name).vocab_size,
-        prepend_bos=model_name in ["gemma-7b", "llama2-7b", "mixtral-7b"],
-        bos={"llama2-7b": 1, "gemma-7b": 2, "mistral-7b": 1}.get(model_name, None),
+        prepend_bos=model_name in ["gemma-7b", "llama2-7b", "mixtral-7b", "gemma2-9b"],
+        bos={"llama2-7b": 1, "gemma-7b": 2, "mistral-7b": 1, "gemma2-9b": 2}.get(
+            model_name, None
+        ),
     )
 
     attentions = get_attentions(model, input_ids)

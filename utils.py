@@ -1,17 +1,18 @@
+import os
+import random
+
+import numpy as np
 import torch
 import torch.nn.functional as F
-import os
-import numpy as np
-import random
 from transformers import (
-    GPT2LMHeadModel,
-    GemmaForCausalLM,
-    LlamaForCausalLM,
+    AutoConfig,
+    AutoModelForCausalLM,
     FalconForCausalLM,
+    GemmaForCausalLM,
+    GPT2LMHeadModel,
+    LlamaForCausalLM,
     MistralForCausalLM,
     OlmoForCausalLM,
-    AutoModelForCausalLM,
-    AutoConfig,
 )
 
 
@@ -183,9 +184,9 @@ def load_model(model_name):
 
     def load_falcon_11b():
         from accelerate import (
+            infer_auto_device_map,
             init_empty_weights,
             load_checkpoint_and_dispatch,
-            infer_auto_device_map,
         )
 
         with init_empty_weights():
@@ -204,6 +205,15 @@ def load_model(model_name):
         )
         return model
 
+    def load_gemma2_9b():
+        gemma = AutoModelForCausalLM.from_pretrained(
+            "google/gemma-2-9b",
+            output_attentions=True,
+            torch_dtype=torch.bfloat16,
+            device_map="cuda",
+        )
+        return gemma
+
     return {
         "gpt2": load_gpt2,
         "gpt2-xl": load_gpt2xl,
@@ -215,6 +225,7 @@ def load_model(model_name):
         "pythia-7b": load_pythia_7b,
         "llama3-8b": load_llama3_8b,
         "falcon-11b": load_falcon_11b,
+        "gemma2-9b": load_gemma2_9b,
     }[model_name]()
 
 
@@ -230,6 +241,7 @@ def get_config(model_name):
         "pythia-7b": "EleutherAI/pythia-6.9b",
         "llama3-8b": "/home/jiajun/.cache/huggingface/hub/models--meta-llama--Llama-3-8b-hf",
         "falcon-11b": "tiiuae/falcon-11B",
+        "gemma2-9b": "google/gemma-2-9b",
     }[model_name]
     config = AutoConfig.from_pretrained(model_name_hf)
 
@@ -239,7 +251,10 @@ def get_config(model_name):
 def get_qkov_weight(model, model_name, config, ilayer, ihead, component):
     num_head = config.num_attention_heads
     d_model = config.hidden_size
-    d_head = d_model // num_head
+    if "head_dim" in vars(config):
+        d_head = vars(config)["head_dim"]
+    else:
+        d_head = d_model // num_head
 
     if model_name in ["gpt2", "gpt2-xl"]:
         attn = model.transformer.h[ilayer].attn.c_attn
@@ -255,29 +270,30 @@ def get_qkov_weight(model, model_name, config, ilayer, ihead, component):
             "o": proj.weight[ihead * d_head : ihead * d_head + d_head, :].T,
         }[component].data
 
-    elif model_name in ["llama2-7b", "gemma-7b", "mistral-7b", "olmo-7b", "llama3-8b"]:
-        if model_name in ["mistral-7b", "llama3-8b"]:
+    elif model_name in [
+        "llama2-7b",
+        "gemma-7b",
+        "mistral-7b",
+        "olmo-7b",
+        "llama3-8b",
+        "gemma2-9b",
+    ]:
+        if model_name in ["mistral-7b", "llama3-8b", "gemma2-9b"]:
             ikvhead = ihead * config.num_key_value_heads // num_head
         else:
             ikvhead = ihead
 
         attn = model.model.layers[ilayer].self_attn
+
         return {
             "q": attn.q_proj.weight.T[:, ihead * d_head : ihead * d_head + d_head],
             "k": attn.k_proj.weight.T[:, ikvhead * d_head : ikvhead * d_head + d_head],
             "v": attn.v_proj.weight.T[:, ikvhead * d_head : ikvhead * d_head + d_head],
             "o": attn.o_proj.weight.T[ihead * d_head : ihead * d_head + d_head, :].T,
         }[component].data
+
     elif model_name in ["falcon-7b"]:
         attn = model.transformer.h[ilayer].self_attention
-        # splited = attn.query_key_value.weight.view(2 + num_head, d_head, d_model)
-        # q, k, v = splited[:-2], splited[-2], splited[-1]
-        # return {
-        #     "q": q[ihead].T,
-        #     "k": k.T,
-        #     "v": v.T,
-        #     "o": attn.dense.weight.T[ihead * d_head : ihead * d_head + d_head, :].T,
-        # }[component].data
         splited = attn.query_key_value.weight.T.view(d_model, 2 + num_head, d_head)
         q, k, v = splited[:, :-2], splited[:, -2], splited[:, -1]
         return {

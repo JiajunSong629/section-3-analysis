@@ -1,11 +1,12 @@
-import torch
+import json
+
+import fire
+import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-import matplotlib.pyplot as plt
 import torch
-import json
-import fire
-from utils import calc_QK_OV, create_folder, custom_svd, svdAB
+
+from utils import custom_svd, svdAB
 
 
 def subspace_matching_IH(
